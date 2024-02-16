@@ -31,6 +31,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Scaffold
@@ -39,6 +41,7 @@ import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -46,7 +49,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
-import com.example.virtucloset.util.ImageStorageUtil
 import com.example.virtucloset.util.ImageStorageUtil.saveImageToStorage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -153,11 +155,14 @@ fun CameraButton(takePictureLauncher: ActivityResultLauncher<Uri>, imageUri: Mut
 
 @Composable
 fun ImageDisplay(bitmap: Bitmap) {
+    val imageSize = 100.dp
     Image(
         bitmap = bitmap.asImageBitmap(),
         contentDescription = "Captured Image",
-        modifier = Modifier.fillMaxWidth(),
-        contentScale = ContentScale.Fit
+        modifier = Modifier
+            .size(imageSize)
+            .clip(RoundedCornerShape(4.dp)),
+        contentScale = ContentScale.Crop
     )
 }
 
