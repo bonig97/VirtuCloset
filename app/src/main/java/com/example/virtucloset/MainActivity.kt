@@ -1,10 +1,14 @@
 package com.example.virtucloset
 
-import android.app.Activity.RESULT_OK
-import android.content.Intent
+import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Matrix
+import android.media.ExifInterface
+import android.net.Uri
 import android.os.Bundle
-import android.provider.MediaStore
+import android.os.Environment
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -31,7 +35,9 @@ import androidx.compose.material3.BottomAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.TopAppBar
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -39,9 +45,15 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.core.content.FileProvider
 import com.example.virtucloset.util.ImageStorageUtil
+import com.example.virtucloset.util.ImageStorageUtil.saveImageToStorage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -61,17 +73,27 @@ class MainActivity : ComponentActivity() {
 fun MainContent() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val imageUri = rememberSaveable { mutableStateOf<Uri?>(null) }
     val imageBitmapState = remember { mutableStateOf<Bitmap?>(null) }
-    val takePictureLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        if (result.resultCode == RESULT_OK) {
-            val imageBitmap = result.data?.extras?.get("data") as? Bitmap
-            imageBitmap?.let {
-                imageBitmapState.value = it
-                scope.launch(Dispatchers.IO) {
-                    ImageStorageUtil.saveImageToStorage(context, it)
+
+    val takePictureLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { success ->
+        if (success) {
+            Log.d("MainActivity", "Image captured successfully")
+            imageUri.value?.let { uri ->
+                val rotatedBitmap = rotateSavedImageIfNeeded(context, uri)
+                val finalBitmap = rotatedBitmap ?: BitmapFactory.decodeStream(context.contentResolver.openInputStream(uri))
+                finalBitmap?.let { bmp ->
+                    imageBitmapState.value = bmp
+                    scope.launch(Dispatchers.IO) {
+                        val savedUri = saveImageToStorage(context, bmp)
+                        if (rotatedBitmap != null) {
+                            context.contentResolver.delete(uri, null, null)
+                        }
+                        imageUri.value = savedUri
+                    }
                 }
+            } ?: run {
+                Log.e("MainActivity", "URI is null after taking picture")
             }
         }
     }
@@ -90,7 +112,7 @@ fun MainContent() {
                         .padding(8.dp),
                     horizontalArrangement = Arrangement.Center
                 ) {
-                    CameraButton(takePictureLauncher)
+                    CameraButton(takePictureLauncher = takePictureLauncher, imageUri = imageUri, context = context)
                 }
             }
         }
@@ -110,22 +132,21 @@ fun MainContent() {
 }
 
 @Composable
-fun CameraButton(takePictureLauncher: ActivityResultLauncher<Intent>) {
-    val context = LocalContext.current
-
+fun CameraButton(takePictureLauncher: ActivityResultLauncher<Uri>, imageUri: MutableState<Uri?>, context: Context) {
     val cameraPermissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission(),
-        onResult = { isGranted: Boolean ->
-            if (isGranted) {
-                takePictureLauncher.launch(Intent(MediaStore.ACTION_IMAGE_CAPTURE))
-            } else {
-                Toast.makeText(context, "Camera permission is required to take pictures", Toast.LENGTH_LONG).show()
-            }
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted: Boolean ->
+        if (isGranted) {
+            val photoFile = createImageFile(context)
+            val photoUri = FileProvider.getUriForFile(context, "${context.applicationContext.packageName}.fileprovider", photoFile)
+            imageUri.value = photoUri
+            takePictureLauncher.launch(photoUri)
+        } else {
+            Toast.makeText(context, "Camera permission is required to take pictures", Toast.LENGTH_LONG).show()
         }
-    )
+    }
 
-    Button(onClick = { cameraPermissionLauncher.launch(android.Manifest.permission.CAMERA) },
-        ) {
+    Button(onClick = { cameraPermissionLauncher.launch(android.Manifest.permission.CAMERA) }) {
         Text("Take Picture")
     }
 }
@@ -138,4 +159,52 @@ fun ImageDisplay(bitmap: Bitmap) {
         modifier = Modifier.fillMaxWidth(),
         contentScale = ContentScale.Fit
     )
+}
+
+fun createImageFile(context: Context): File {
+    val timeStamp: String = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+    val imageFileName = "JPEG_$timeStamp"
+    val storageDir = context.getExternalFilesDir(Environment.DIRECTORY_PICTURES)
+
+    return File.createTempFile(
+        imageFileName,
+        ".jpg",
+        storageDir
+    ).apply {
+        var currentPhotoPath = absolutePath
+        Log.d("MainActivity", "Current photo path: $currentPhotoPath")
+    }
+}
+
+fun rotateSavedImageIfNeeded(context: Context, imageUri: Uri): Bitmap? {
+    val inputStream = context.contentResolver.openInputStream(imageUri) ?: return null
+    val exifInterface = ExifInterface(inputStream)
+    val orientation = exifInterface.getAttributeInt(
+        ExifInterface.TAG_ORIENTATION,
+        ExifInterface.ORIENTATION_UNDEFINED
+    )
+    inputStream.close()
+
+    val rotationDegrees = when (orientation) {
+        ExifInterface.ORIENTATION_ROTATE_90 -> 90f
+        ExifInterface.ORIENTATION_ROTATE_180 -> 180f
+        ExifInterface.ORIENTATION_ROTATE_270 -> 270f
+        else -> 0f
+    }
+
+    if (rotationDegrees != 0f) {
+        val imageStream = context.contentResolver.openInputStream(imageUri) ?: return null
+        val bitmap = BitmapFactory.decodeStream(imageStream)
+        imageStream.close()
+
+        return bitmap?.let {
+            rotateImage(it, rotationDegrees)
+        }
+    }
+    return null
+}
+
+fun rotateImage(originalBitmap: Bitmap, degrees: Float): Bitmap {
+    val matrix = Matrix().apply { postRotate(degrees) }
+    return Bitmap.createBitmap(originalBitmap, 0, 0, originalBitmap.width, originalBitmap.height, matrix, true)
 }
