@@ -34,6 +34,12 @@ object ImageUtil {
                     throw IOException("Failed to save bitmap to output stream")
                 }
             }
+            val savedFile = context.contentResolver.openFileDescriptor(uri, "r")
+            if (savedFile == null) {
+                Log.e("ImageStorageUtil", "File not found after save at URI: $uri")
+            } else {
+                savedFile.close()
+            }
             Log.d("ImageStorageUtil", "Image saved to storage: $uri")
             return uri
         } catch (e: Exception) {
@@ -96,5 +102,20 @@ object ImageUtil {
         } finally {
             inputStream?.close()
         }
+    }
+
+    fun saveImageUri(context: Context, uri: Uri) {
+        val sharedPref = context.getSharedPreferences("VirtuClosetPreferences", Context.MODE_PRIVATE)
+        val editor = sharedPref.edit()
+        val images = HashSet(sharedPref.getStringSet("images", setOf()) ?: setOf())
+        images.add(uri.toString())
+        editor.putStringSet("images", images)
+        editor.apply()
+    }
+
+    fun getImageUris(context: Context): Set<Uri> {
+        val sharedPref = context.getSharedPreferences("VirtuClosetPreferences", Context.MODE_PRIVATE)
+        val imagesSet = HashSet(sharedPref.getStringSet("images", setOf()) ?: setOf())
+        return imagesSet.map { Uri.parse(it) }.toSet()
     }
 }
