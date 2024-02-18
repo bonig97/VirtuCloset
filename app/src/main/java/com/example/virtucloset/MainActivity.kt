@@ -13,6 +13,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -20,6 +21,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -30,6 +34,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.BottomAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -46,11 +51,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import com.example.virtucloset.ui.theme.VirtuClosetTheme
+import com.example.virtucloset.util.ImageUtil
 import com.example.virtucloset.util.ImageUtil.createImageFile
 import com.example.virtucloset.util.ImageUtil.rotateSavedImageIfNeeded
 import com.example.virtucloset.util.ImageUtil.saveImageToStorage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.FileNotFoundException
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -72,6 +80,11 @@ fun MainContent() {
     val scope = rememberCoroutineScope()
     val imageUri = rememberSaveable { mutableStateOf<Uri?>(null) }
     val imageBitmapState = remember { mutableStateOf<Bitmap?>(null) }
+    val savedImageUris = remember { mutableStateOf(setOf<Uri>()) }
+
+    LaunchedEffect(key1 = true) {
+        savedImageUris.value = ImageUtil.getImageUris(context)
+    }
 
     val takePictureLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { success ->
         if (success) {
@@ -83,10 +96,14 @@ fun MainContent() {
                     imageBitmapState.value = bmp
                     scope.launch(Dispatchers.IO) {
                         val savedUri = saveImageToStorage(context, bmp)
-                        if (rotatedBitmap != null) {
-                            context.contentResolver.delete(uri, null, null)
+                        savedUri?.let {
+                            ImageUtil.saveImageUri(context, it)
+                            withContext(Dispatchers.Main) {
+                                savedImageUris.value = savedImageUris.value + savedUri
+                                imageBitmapState.value = null
+                                imageUri.value = null
+                            }
                         }
-                        imageUri.value = savedUri
                     }
                 }
             } ?: run {
@@ -117,13 +134,19 @@ fun MainContent() {
         Column(
             modifier = Modifier
                 .padding(paddingValues)
-                .fillMaxSize(),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally
+                .fillMaxSize()
         ) {
-            imageBitmapState.value?.let { bitmap ->
-                ImageDisplay(bitmap = bitmap)
-            } ?: Text("No image captured", style = MaterialTheme.typography.bodyLarge)
+            if (savedImageUris.value.isNotEmpty() || imageBitmapState.value != null) {
+                LazyVerticalGrid(
+                    columns = GridCells.Adaptive(minSize = 100.dp)
+                ) {
+                    items(savedImageUris.value.toList(), key = { uri -> uri.toString() }) { uri ->
+                        ImageDisplay(context, uri = uri)
+                    }
+                }
+            } else {
+                Text("No image captured", style = MaterialTheme.typography.bodyLarge, modifier = Modifier.align(Alignment.CenterHorizontally))
+            }
         }
     }
 }
@@ -149,14 +172,28 @@ fun CameraButton(takePictureLauncher: ActivityResultLauncher<Uri>, imageUri: Mut
 }
 
 @Composable
-fun ImageDisplay(bitmap: Bitmap) {
+fun ImageDisplay(context: Context, uri: Uri) {
     val imageSize = 100.dp
-    Image(
-        bitmap = bitmap.asImageBitmap(),
-        contentDescription = "Captured Image",
-        modifier = Modifier
-            .size(imageSize)
-            .clip(RoundedCornerShape(4.dp)),
-        contentScale = ContentScale.Crop
-    )
+    val bitmap = remember { mutableStateOf<Bitmap?>(null) }
+
+    LaunchedEffect(uri) {
+        try {
+            context.contentResolver.openInputStream(uri)?.use { stream ->
+                bitmap.value = BitmapFactory.decodeStream(stream)
+            }
+        } catch (e: FileNotFoundException) {
+            Log.e("ImageDisplay", "File not found: $uri", e)
+        }
+    }
+    bitmap.value?.let {
+        Image(
+            bitmap = it.asImageBitmap(),
+            contentDescription = "Captured Image",
+            modifier = Modifier
+                .size(width = imageSize, height = imageSize)
+                .border(2.dp, Color.Red)
+                .clip(RoundedCornerShape(2.dp)),
+            contentScale = ContentScale.Crop
+        )
+    }
 }
