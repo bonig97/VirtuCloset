@@ -138,7 +138,7 @@ fun MainContent() {
         ) {
             if (savedImageUris.value.isNotEmpty() || imageBitmapState.value != null) {
                 LazyVerticalGrid(
-                    columns = GridCells.Adaptive(minSize = 100.dp)
+                    columns = GridCells.Adaptive(minSize = 120.dp)
                 ) {
                     items(savedImageUris.value.toList(), key = { uri -> uri.toString() }) { uri ->
                         ImageDisplay(context, uri = uri)
@@ -191,7 +191,6 @@ fun ImageDisplay(context: Context, uri: Uri) {
             contentDescription = "Captured Image",
             modifier = Modifier
                 .size(width = imageSize, height = imageSize)
-                .border(2.dp, Color.Red)
                 .clip(RoundedCornerShape(2.dp)),
             contentScale = ContentScale.Crop
         )
